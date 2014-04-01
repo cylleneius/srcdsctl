@@ -212,8 +212,10 @@ dynset *stuff_message( message *m )
                 int m;
                 for(m=0; m < MAX_PACKET_SIZE; m++ )
                 {
-                    if( pb->buffer[m] >
-                    printf("%c", pb->buffer[m]);
+                    if( pb->buffer[m] > 96 && pb->buffer[m] < 123 )
+                        printf("%c", pb->buffer[m]);
+                    else
+                        printf(".");
                 }
                 printf("\n");
             }
