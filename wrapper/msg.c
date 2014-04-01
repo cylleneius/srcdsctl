@@ -84,7 +84,7 @@ unsigned char msgtest2[] = "xxxx1$eone|keytwo|valuetwo|>";
 #define MESSAGE_END       '>'
 #define DELIMITER         '|'
 
-#define MAX_PACKET_SIZE 40
+#define MAX_PACKET_SIZE 30
 
 //Write to dest buffer from src buffer starting at offset, return length written
 unsigned int write_to_buffer( unsigned char *dest, unsigned int offset,
@@ -117,120 +117,81 @@ dynset *stuff_message( message *m )
         int num_packets = 0;
         int total_length = 0;
         
-        //First we determine length
-        int i;
-        for( i=0; i < m->kvs->len; i++ )
-        {
-            //Since dynset holds voids we have to cast it.
-            item *kv = (item*)m->kvs->items[ i ];
-            printf("%x %x %x %i %i\n", kv,kv->k, kv->v, kv->k_len, kv->v_len );
-            total_length += kv->k_len + kv->v_len + 2;
-        }
+        int j;
         
-        //Checking if we can just treat our message as one packet.
-        int test_total = total_length + 8;
-        printf("Test total: %i\n", test_total );
-        if( test_total > MAX_PACKET_SIZE )
+        packet *p = NULL;
+        
+        for( j=0; j < m->kvs->len; j++ )
         {
-            int max = MAX_PACKET_SIZE - 8;
-            int n = total_length / max;
-            int nr = total_length % max;
-            printf("n: %i nr: %i\n", n, nr );
-            
-            //Here n is the number of packets we need. (if nr is 0)
-            //Otherwise the number of packets we need is n + 1
-            int j;
-            
-            packet *p = NULL;
-            
-            for( j=0; j < m->kvs->len; j++ )
+            item *kv = (item*)m->kvs->items[ j ];
+            if( kv != NULL )
             {
-                item *kv = (item*)m->kvs->items[ j ];
-                if( kv != NULL )
+                if( kv->k != NULL && kv->v != NULL )
                 {
-                    if( kv->k != NULL && kv->v != NULL )
+                    if( p == NULL )
                     {
-                        if( p == NULL )
-                        {
-                            //
-                            //
-                            p = new_packet( );
-                            p->buffer = malloc( MAX_PACKET_SIZE );
-                            p->offset = 8;
-                            dynset_add( s, p );
-                            //
-                            //
-                        }
-                        
-                        unsigned int wr =0;
                         //
                         //
-                        //
-                        wr = write_to_buffer( p->buffer, p->offset, MAX_PACKET_SIZE-1,
-                                              kv->k, kv->k_len );
-                        p->offset += wr;
-                        if( wr != kv->k_len )
-                        {
-                            //
-                            //
-                            p = new_packet( );
-                            p->buffer = malloc( MAX_PACKET_SIZE );
-                            p->offset = 8;
-                            dynset_add( s, p );
-                            //
-                            //
-                            int wrr;
-                            wrr = write_to_buffer( p->buffer, p->offset, MAX_PACKET_SIZE-1,
-                                                  kv->k+wr, kv->k_len-wr );
-                            p->offset += wrr;
-                        }
+                        p = new_packet( );
+                        p->buffer = malloc( MAX_PACKET_SIZE );
+                        p->offset = 8;
+                        dynset_add( s, p );
                         //
                         //
-                        //
-                        wr = write_to_buffer( p->buffer, p->offset, MAX_PACKET_SIZE-1,
-                                              kv->v, kv->v_len );
-                        p->offset += wr;
-                        if( wr != kv->v_len )
-                        {
-                            //
-                            //
-                            p = new_packet( );
-                            p->buffer = malloc( MAX_PACKET_SIZE );
-                            p->offset = 8;
-                            dynset_add( s, p );
-                            //
-                            //
-                            int wrr;
-                            wrr = write_to_buffer( p->buffer, p->offset, MAX_PACKET_SIZE-1,
-                                                  kv->v+wr, kv->v_len-wr );
-                            p->offset += wrr;
-                        }
-                        //
-                        //
-                        //
-
                     }
+                    
+                    unsigned int wr =0;
+                    //
+                    //
+                    //
+                    wr = write_to_buffer( p->buffer, p->offset, MAX_PACKET_SIZE-1,
+                                          kv->k, kv->k_len );
+                    p->offset += wr;
+                    if( wr != kv->k_len )
+                    {
+                        //
+                        //
+                        p = new_packet( );
+                        p->buffer = malloc( MAX_PACKET_SIZE );
+                        p->offset = 8;
+                        dynset_add( s, p );
+                        //
+                        //
+                        int wrr;
+                        wrr = write_to_buffer( p->buffer, p->offset, MAX_PACKET_SIZE-1,
+                                              kv->k+wr, kv->k_len-wr );
+                        p->offset += wrr;
+                    }
+                    //
+                    //
+                    //
+                    wr = write_to_buffer( p->buffer, p->offset, MAX_PACKET_SIZE-1,
+                                          kv->v, kv->v_len );
+                    p->offset += wr;
+                    if( wr != kv->v_len )
+                    {
+                        //
+                        //
+                        p = new_packet( );
+                        p->buffer = malloc( MAX_PACKET_SIZE );
+                        p->offset = 8;
+                        dynset_add( s, p );
+                        //
+                        //
+                        int wrr;
+                        wrr = write_to_buffer( p->buffer, p->offset, MAX_PACKET_SIZE-1,
+                                              kv->v+wr, kv->v_len-wr );
+                        p->offset += wrr;
+                    }
+                    //
+                    //
+                    //
+    
                 }
-            }
-            printf("%i\n", s->len);
-            int i;
-            for( i=0; i < s->len;i++ )
-            {
-                packet *pb = (packet*)s->items[i];
-                printf( "Packet: " );
-                int m;
-                for(m=0; m < MAX_PACKET_SIZE; m++ )
-                {
-                    if( pb->buffer[m] > 31 && pb->buffer[m] < 127 )
-                        printf("%c", pb->buffer[m]);
-                    else
-                        printf(".");
-                }
-                printf("\n");
             }
         }
     }
-    return NULL;
+    return s;
 }
 
 unsigned char key_0[ ] = "keyone";
@@ -277,7 +238,24 @@ void main( )
     dynset_add( m->kvs, i_3 );
     //We have a message we want to send, but we only send packets.
     dynset *s = stuff_message( m );
-    
+    printf("%i\n", s->len);
+    int l;
+    for( l=0; l < s->len;l++ )
+    {
+        packet *pb = (packet*)s->items[l];
+        printf( "Packet: " );
+        int m;
+        for(m=0; m < MAX_PACKET_SIZE; m++ )
+        {
+            if( pb->buffer[m] > 31 && pb->buffer[m] < 127 )
+                printf("%c", pb->buffer[m]);
+            else
+                printf(".");
+        }
+        printf("\n");
+    }
+
+
     //We get a packet, extract the first five bytes, then parse the remaining.
     
     //We'll want to check if the last byte is a continue, if it is we'll wait
