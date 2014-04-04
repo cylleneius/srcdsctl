@@ -44,7 +44,8 @@ message *new_message( )
 }
 
 #define MAX_PACKET_SIZE 30
-#define MAX_PAYLOAD_SIZE MAX_PACKET_SIZE - 8
+#define PACKET_CONTROL_BYTES 8 // PPPPOSLT T=< or $
+#define MAX_PAYLOAD_SIZE MAX_PACKET_SIZE - (PACKET_CONTROL_BYTES + 1) // endbyte
 
 typedef struct
 {
@@ -61,12 +62,11 @@ typedef struct
             unsigned char order;
             unsigned char s;
             unsigned char l;
-
+            unsigned char startbyte;
             unsigned char payload[ MAX_PAYLOAD_SIZE ];
         } header;
     } data;
-    //
-    //unsigned char *buffer;
+    
     unsigned int offset;
     //
 } packet;
@@ -78,10 +78,7 @@ packet *new_packet( )
     packet *p      = (packet*)malloc( sizeof( packet ) );
     p->data.header.pid.integer = getpid( );
     p->data.header.order       = 0;
-    //
-    //
-    //p->buffer      = NULL;
-    p->offset      = 0;
+    p->offset  = 0;
     //
     //
     return p;
@@ -122,6 +119,27 @@ unsigned int write_to_buffer( unsigned char *dest, unsigned int offset,
     return 0;
 }
 
+packet *packet_add( dynset *s, packet *p, unsigned char *str, unsigned int len )
+{
+    unsigned int wr;
+    wr = write_to_buffer( p->data.header.payload,p->offset,MAX_PAYLOAD_SIZE,str,len );
+    p->offset += wr;
+    if( wr != len )
+    {
+        p->data.header.payload[ p->offset ] = MESSAGE_CONTINUE;
+        //
+        //
+        packet *q = new_packet( );
+        q->data.header.order = p->data.header.order + 1;
+        q->data.header.startbyte = MESSAGE_RESUME;
+        dynset_add( s, q );
+        
+        q = packet_add( s, q, str+wr, len-wr );
+        return q;
+    }
+    
+    return p;
+}
 
 dynset *stuff_message( message *m )
 {
@@ -147,66 +165,20 @@ dynset *stuff_message( message *m )
                         //
                         //
                         p = new_packet( );
-                        //p->buffer = malloc( MAX_PACKET_SIZE );
-                        p->offset = 7;
                         p->data.header.order = s->len;
+                        p->data.header.startbyte = MESSAGE_START;
                         dynset_add( s, p );
                         //
                         //
                     }
                     
-                    unsigned int wr =0;
-                    //
-                    //
-                    //
-                    wr = write_to_buffer( p->data.buffer, p->offset, MAX_PACKET_SIZE-1,
-                                          kv->k, kv->k_len );
-                    p->offset += wr;
-                    if( wr != kv->k_len )
-                    {
-                        //
-                        //
-                        p = new_packet( );
-                        //p->buffer = malloc( MAX_PACKET_SIZE );
-                        p->offset = 7;
-                        p->data.header.order = s->len;
-                        dynset_add( s, p );
-                        //
-                        //
-                        int wrr;
-                        wrr = write_to_buffer( p->data.buffer, p->offset, MAX_PACKET_SIZE-1,
-                                              kv->k+wr, kv->k_len-wr );
-                        p->offset += wrr;
-                    }
-                    //
-                    //
-                    //
-                    wr = write_to_buffer( p->data.buffer, p->offset, MAX_PACKET_SIZE-1,
-                                          kv->v, kv->v_len );
-                    p->offset += wr;
-                    if( wr != kv->v_len )
-                    {
-                        //
-                        //
-                        p = new_packet( );
-                        //p->data.buffer = malloc( MAX_PACKET_SIZE );
-                        p->offset = 7;
-                        p->data.header.order = s->len;
-                        dynset_add( s, p );
-                        //
-                        //
-                        int wrr;
-                        wrr = write_to_buffer( p->data.buffer, p->offset, MAX_PACKET_SIZE-1,
-                                              kv->v+wr, kv->v_len-wr );
-                        p->offset += wrr;
-                    }
-                    //
-                    //
-                    //
-    
+                    p = packet_add( s, p, kv->k, kv->k_len );
+                    p = packet_add( s, p, kv->v, kv->v_len );
                 }
             }
         }
+        
+        p->data.header.payload[ p->offset ] = MESSAGE_END;
     }
     return s;
 }
@@ -276,6 +248,8 @@ void main( )
         printf("\n");
     }
     
+    //
+    //
     unsigned char *msg = (unsigned char*)malloc( s->len * MAX_PAYLOAD_SIZE );
     unsigned int offset= 0;
     for( l=0; l < s->len;l++ )
@@ -302,30 +276,21 @@ void main( )
     //We'll check the first byte, in case it's a resume. If it is we'll match
     //it up with any continue we have pending.
     
-    //At this point our message buffer will look like this: (from msgtest)
-    //1keyone|valueone|keytwo|valuetwo|
-    //And, after extracting the type byte, is ready to be parsed:
-    //keyone|valueone|keytwo|valuetwo|
-    //for( l=0; l < s->len;l++ )
-    //{
-        //packet *pb = (packet*)s->items[l];
-        
-        int i = 0;
-        int j;
-        for( j = i; j < s->len * MAX_PAYLOAD_SIZE; j++ )
+    int i = 0;
+    int j;
+    for( j = i; j < s->len * MAX_PAYLOAD_SIZE; j++ )
+    {
+        if( msg[ j ] == DELIMITER )
         {
-            if( msg[ j ] == DELIMITER )
-            {
-                item *t = (item*)malloc( sizeof( item ) );
-                
-                int len = j - i;
-                unsigned char *tmp = (unsigned char*)malloc( len+1 );
-                memcpy( tmp, msg+i, len );
-                tmp[ len ] = '\0';
-                printf( "%s\n", tmp );
-                
-                i = j+1;
-            }
+            item *t = (item*)malloc( sizeof( item ) );
+            
+            int len = j - i;
+            unsigned char *tmp = (unsigned char*)malloc( len+1 );
+            memcpy( tmp, msg+i, len );
+            tmp[ len ] = '\0';
+            printf( "%s\n", tmp );
+            
+            i = j+1;
         }
-    //}
+    }
 }
