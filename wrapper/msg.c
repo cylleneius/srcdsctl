@@ -1,36 +1,35 @@
-#include <unistd.h>
-#include <stdio.h>
-#include <string.h>
-#include <memory.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include "dynset.h"
+#include "msg.h"
 
-typedef struct
-{
-    unsigned char *k;
-    unsigned int k_len;
-    
-    unsigned char *v;
-    unsigned int v_len;
-} item;
-
-item *new_item( )
-{
-    item *i  = (item*)malloc( sizeof( item ) );
-    i->k     = NULL;
-    i->k_len = 0;
-    i->v     = NULL;
-    i->v_len = 0;
-    return i;
-}
-
-typedef struct
-{
-    unsigned char type;
-    dynset *kvs;
-} message;
-
+dynset *fragments;
+//The fragments could look like:
+// f1: p1 p2 [] p4
+// f2: [] p2 p3 []
+// f3: p1 [] [] p4
+// If msg had a count like the packets do, these fragments would be grouped by
+// the msg count. Since they don't we'll group them by their immediate neighbors
+// And also their pid. If two packets have two different pids, it's unlikely
+// they would be part of the same message.
+// 
+// If a message, msg0 spanned two packets, p0, p1, and another, msg1, spanned
+// the next three packets we might get a packet stream like:
+// p1p3p2p0p4
+// In which case the appropriate sorting would be iterative as new packets are
+// received:
+// t1:   f1: p1
+// t2:   f1: p1
+//       f2: p3
+// t3:   f1: p1
+//       f2: p3 p2
+// t4:   f1: p1 p0 < No longer a fragment
+//       f2: p3 p2
+// t5:   f2: p3 p2 p4
+// This would require being able to split fragments in cases like:
+// t1:   f1: p0 p4
+// We have a start packet, and an end packet, but no middle packets.
+// If we then received p2 (msg1's start packet):
+// t2:   f1: p0 p2 p4 < we need to split this
+// t3:   f1: p0
+//       f2: p2 p4
 message *new_message( )
 {
     //
@@ -43,105 +42,113 @@ message *new_message( )
     return m;
 }
 
-#define MAX_PACKET_SIZE 30
-#define PACKET_CONTROL_BYTES 8 // PPPPOSLT T=< or $
-#define MAX_PAYLOAD_SIZE MAX_PACKET_SIZE - (PACKET_CONTROL_BYTES + 1) // endbyte
-
-typedef struct
+dynset *packet_sorter_add( packet *p )
 {
-    union
+    if( fragments == NULL ) fragments = new_dynset( );
+    int matches = 0;
+    int i;
+    for( i=0; i < fragments->len; i++ )
     {
-        unsigned char buffer[ MAX_PACKET_SIZE ];
-        struct
+        dynset *s = (dynset*)fragments->items[ i ];
+        int j;
+        for( j=0; j < s->len; j++ )
         {
-            union
+            packet *q = (packet*)s->items[j];
+            printf( "packet is " );
+            if( p->data.header.startbyte == MESSAGE_START )
             {
-                unsigned char bytes[4];
-                unsigned int integer;
-            } pid;
-            unsigned char order;
-            unsigned char s;
-            unsigned char l;
-            unsigned char startbyte;
-            unsigned char payload[ MAX_PAYLOAD_SIZE ];
-        } header;
-    } data;
-    
-    unsigned int offset;
-    //
-} packet;
-
-packet *new_packet( )
-{
-    //
-    // Let's make a (empty) packet!
-    packet *p      = (packet*)malloc( sizeof( packet ) );
-    p->data.header.pid.integer = getpid( );
-    p->data.header.order       = 0;
-    p->offset  = 0;
-    //
-    //
-    return p;
-}
-
-unsigned char msgtest0[] = "xxxx0<1keyone|valueone|keytwo|valuetwo|>";
-unsigned char msgtest1[] = "xxxx1<1keyone|valu@";
-unsigned char msgtest2[] = "xxxx1$eone|keytwo|valuetwo|>";
-
-
-#define MESSAGE_START     '<'
-#define MESSAGE_CONTINUE  '@'
-#define MESSAGE_RESUME    '$'
-#define MESSAGE_END       '>'
-#define DELIMITER         '|'
-
-
-
-//Write to dest buffer from src buffer starting at offset, return length written
-unsigned int write_to_buffer( unsigned char *dest, unsigned int offset,
-                                                   unsigned int d_len,
-                              unsigned char *src , unsigned int s_len )
-{
-    if( s_len + offset < d_len )
-    {
-        memcpy( dest + offset, src, s_len );
-        memcpy( dest + offset+s_len-1, "|", 1 );
-        return s_len;
-    }
-    else
-    {
-        unsigned int diff = s_len + offset - d_len;
-        unsigned int s_offset = s_len - diff;
-        memcpy( dest + offset, src, s_offset );
+                if(p->data.header.payload[MAX_PAYLOAD_SIZE] == MESSAGE_CONTINUE)
+                {
+                    //
+                    //
+                    //
+                    // FIXME: This is part of matching stuff.
+                    if(p->data.header.pid.integer == q->data.header.pid.integer)
+                    {
+                        //Only checking if we come before a packet we have,since
+                        //we're a starting byte.
+                        if( p->data.header.order == (q->data.header.order-1) )
+                        {
+                            printf("packet comes before q\n");
+                            dynset_add( s, p );
+                            matches+=1;
+                        }
+                    }
+                    //
+                    //
+                    //
+                }
+                else
+                {
+                    //assume it's a full message ?
+                    //If it isn't, it must be an ending byte, otherwise it's
+                    //garbage
+                }
+        }
+        else if( p->data.header.startbyte == MESSAGE_RESUME )
+        {
+            if( p->data.header.payload[MAX_PAYLOAD_SIZE] == MESSAGE_CONTINUE )
+            {
+                //
+                //
+                //
+                // FIXME: This is part of matching stuff.
+                if( p->data.header.pid.integer == q->data.header.pid.integer )
+                {
+                    //printf("pid matches.\n");
+                    if( p->data.header.order == (q->data.header.order-1) )
+                    {
+                        printf("packet comes before q\n");
+                        dynset_add( s, p );
+                        matches+=1;
+                    }
+                    else if( p->data.header.order == (q->data.header.order+1) )
+                    {
+                        printf("packet comes after q\n");
+                        dynset_add( s, p );
+                        matches+=1;
+                    }
+                }
+                //
+                //
+                //
+            }
+            else
+            {
+                //
+                //
+                //
+                // FIXME: This is part of matching stuff.
+                if( p->data.header.pid.integer == q->data.header.pid.integer )
+                {
+                    if( p->data.header.order == (q->data.header.order+1) )
+                    {
+                        printf("packet comes after q\n");
+                        dynset_add( s, p );
+                        matches+=1;
+                    }
+                }
+                //
+                //
+                //
+            }
+        }
+        else
+        {
+            //malformed packet
+        }
         
-        return s_offset;
+        }
     }
-    return 0;
-}
-
-packet *packet_add( dynset *s, packet *p, unsigned char *str, unsigned int len )
-{
-    unsigned int wr;
-    wr = write_to_buffer( p->data.header.payload,p->offset,MAX_PAYLOAD_SIZE,str,len );
-    p->offset += wr;
-    if( wr != len )
+    if( matches == 0 )
     {
-        p->data.header.payload[ p->offset ] = MESSAGE_CONTINUE;
-        //
-        //
-        packet *q = new_packet( );
-        q->data.header.order = p->data.header.order + 1;
-        q->data.header.startbyte = MESSAGE_RESUME;
-        dynset_add( s, q );
-        
-        q = packet_add( s, q, str+wr, len-wr );
-        return q;
+        dynset *s = new_dynset( );
+        dynset_add( s, p );
+        dynset_add( fragments, s );
     }
-    
-    return p;
 }
 
-dynset *stuff_message( message *m )
+dynset *split_message( message *m )
 {
     dynset *s = new_dynset( );
     if( m )
@@ -165,7 +172,7 @@ dynset *stuff_message( message *m )
                         //
                         //
                         p = new_packet( );
-                        p->data.header.order = s->len;
+                        //p->data.header.order = s->len;
                         p->data.header.startbyte = MESSAGE_START;
                         dynset_add( s, p );
                         //
@@ -187,18 +194,21 @@ unsigned char key_0[ ] = "keyone";
 unsigned char key_1[ ] = "keytwo";
 unsigned char key_2[ ] = "keythree";
 unsigned char key_3[ ] = "keyfour";
+unsigned char key_4[ ] = "keyfive";
 
 unsigned char value_0[ ] = "valueone";
 unsigned char value_1[ ] = "valuetwo";
 unsigned char value_2[ ] = "valuethree";
 unsigned char value_3[ ] = "valuefour";
-
+unsigned char value_4[ ] = "valuefive";
 void main( )
 {
+    current_packet_count = 0;
     item *i_0 = new_item( );
     item *i_1 = new_item( );
     item *i_2 = new_item( );
     item *i_3 = new_item( );
+    item *i_4 = new_item( );
     
     i_0->k = key_0;
     i_0->k_len = sizeof( key_0 );
@@ -208,7 +218,9 @@ void main( )
     i_2->k_len = sizeof( key_2 );
     i_3->k = key_3;
     i_3->k_len = sizeof( key_3 );
-
+    i_4->k = key_4;
+    i_4->k_len = sizeof( key_4 );
+    
     i_0->v = value_0;
     i_0->v_len = sizeof( value_0 );
     i_1->v = value_1;
@@ -217,39 +229,91 @@ void main( )
     i_2->v_len = sizeof( value_2 );
     i_3->v = value_3;
     i_3->v_len = sizeof( value_3 );
+    i_4->v = value_4;
+    i_4->v_len = sizeof( value_4 );
     
-    //packet *p = new_packet( );
-    message *m = new_message( );
+    message *m1 = new_message( );
+    message *m2 = new_message( );
     
-    dynset_add( m->kvs, i_0 );
-    dynset_add( m->kvs, i_1 );
-    dynset_add( m->kvs, i_2 );
-    dynset_add( m->kvs, i_3 );
+    dynset_add( m1->kvs, i_0 );
+    dynset_add( m1->kvs, i_1 );
+    dynset_add( m2->kvs, i_2 );
+    dynset_add( m2->kvs, i_3 );
+    dynset_add( m2->kvs, i_4 );
+    
     //We have a message we want to send, but we only send packets.
-    dynset *s = stuff_message( m );
+    dynset *s = split_message( m1 );
+    dynset *s2 = split_message( m2 );
     
-    
-    
-    
-    printf("%i\n", s->len);
+    //printf("%i\n", s->len);
     int l;
     for( l=0; l < s->len;l++ )
     {
         packet *pb = (packet*)s->items[l];
-        printf( "Packet: " );
-        int m;
-        for(m=0; m < MAX_PACKET_SIZE; m++ )
+        //packet_sorter_add( pb );
+        printf( "\nPacket: " );
+        int k;
+        for(k=0; k < MAX_PACKET_SIZE; k++ )
         {
-            if( pb->data.buffer[m] > 31 && pb->data.buffer[m] < 127 )
-                printf("%c", pb->data.buffer[m]);
+            if( pb->data.buffer[k] > 31 && pb->data.buffer[k] < 127 )
+                printf("%c", pb->data.buffer[k]);
             else
-                printf("%x", pb->data.buffer[m]);
+                printf("%x", pb->data.buffer[k]);
         }
         printf("\n");
+    }
+    packet_sorter_add( (packet*)s->items[1] );
+    packet_sorter_add( (packet*)s->items[0] );
+    
+    for( l=0; l < s2->len;l++ )
+    {
+        packet *pb = (packet*)s2->items[l];
+        //packet_sorter_add( pb );
+        printf( "\nPacket: " );
+        int k;
+        for(k=0; k < MAX_PACKET_SIZE; k++ )
+        {
+            if( pb->data.buffer[k] > 31 && pb->data.buffer[k] < 127 )
+                printf("%c", pb->data.buffer[k]);
+            else
+                printf("%x", pb->data.buffer[k]);
+        }
+        printf("\n");
+    }
+    packet_sorter_add( (packet*)s2->items[2] );
+    packet_sorter_add( (packet*)s2->items[0] );
+    packet_sorter_add( (packet*)s2->items[1] );
+    
+    for( l=0; l < fragments->len;l++ )
+    {
+        dynset *s = (dynset*)fragments->items[l];
+        printf( "frag[ %i ] = {\n", l );
+        int k;
+        for(k=0; k < s->len; k++ )
+        {
+            printf( "\t");
+            packet *pb = (packet*)s->items[k];
+        
+        printf( "[" );
+        int j;
+        for(j=0; j < MAX_PACKET_SIZE; j++ )
+        {
+            if( pb->data.buffer[j] > 31 && pb->data.buffer[j] < 127 )
+                printf("%c", pb->data.buffer[j]);
+            else
+                printf("%x", pb->data.buffer[j]);
+        }
+        printf( "]\n" );
+        }
+        printf("}\n");
     }
     
     //
     //
+    //
+    
+    //We have some packets, but we only want messages.
+    
     unsigned char *msg = (unsigned char*)malloc( s->len * MAX_PAYLOAD_SIZE );
     unsigned int offset= 0;
     for( l=0; l < s->len;l++ )
@@ -275,6 +339,7 @@ void main( )
     
     //We'll check the first byte, in case it's a resume. If it is we'll match
     //it up with any continue we have pending.
+    
     
     int i = 0;
     int j;
