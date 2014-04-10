@@ -20,20 +20,24 @@ typedef struct
     unsigned int v_len;
 } item;
 
-item *new_item( )
-{
-    item *i  = (item*)malloc( sizeof( item ) );
-    i->k     = NULL;
-    i->k_len = 0;
-    i->v     = NULL;
-    i->v_len = 0;
-    return i;
-}
-
 typedef struct
 {
     unsigned char type;
     dynset *kvs;
 } message;
+
+
+typedef struct
+{
+    void *prev;
+    void *next;
+    void *curr;
+} fragment_item;
+
+typedef struct
+{
+    fragment_item *head;
+    fragment_item *tail;
+} fragment_sequence;
 
 #endif
