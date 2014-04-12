@@ -1,17 +1,19 @@
 #include "packet.h"
 
+packet *new_packet_empty( )
+{
+    packet *p      = (packet*)malloc( sizeof( packet ) );
+    p->offset  = 0;
+    return p;
+}
+
 packet *new_packet( )
 {
-    //
-    // Let's make a (empty) packet!
     packet *p      = (packet*)malloc( sizeof( packet ) );
     p->data.header.pid.integer = getpid( );
     p->data.header.order       = current_packet_count;
     p->offset  = 0;
-    //
-    //
     current_packet_count += 1;
-    
     return p;
 }
 

@@ -40,4 +40,6 @@ typedef struct
     fragment_item *tail;
 } fragment_sequence;
 
+dynset *fragments;
+
 #endif

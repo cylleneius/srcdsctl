@@ -3,7 +3,8 @@ CC = gcc
 CCFLAGS = -g -O3 -Wshadow -Wconversion -D_THREAD_SAFE -D_REENTRANT 
 TARGET = msg
 
-SOURCES = msg.c \
+SOURCES = main.c \
+          msg.c \
           packet.c \
           dynset.c
 		  
